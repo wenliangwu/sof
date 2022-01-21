@@ -15,7 +15,7 @@ set(TPLGS
 # CAVS SDW topology with passthrough pipelines
 "cavs-sdw\;cavs-sdw"
 # CAVS SSP topology with passthrough pipelines
-"cavs-nocodec\;cavs-nocodec"
+"cavs-nocodec\;cavs-nocodec\;HDA_CONFIG=none"
 )
 
 # This will override the topology1 binaries with topology2 binaries
