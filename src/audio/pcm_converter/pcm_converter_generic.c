@@ -692,6 +692,12 @@ const struct pcm_func_vc_map pcm_func_vc_map[] = {
 	{ SOF_IPC_FRAME_S32_LE, SOF_IPC_FRAME_S24_4LE, SOF_IPC_FRAME_S32_LE, SOF_IPC_FRAME_S16_LE,
 		pcm_convert_s24_c32_to_s16_c32 },
 #endif
+#if CONFIG_PCM_CONVERTER_FORMAT_S16_C32_AND_S16_C32
+	{ SOF_IPC_FRAME_S32_LE, SOF_IPC_FRAME_S16_LE, SOF_IPC_FRAME_S32_LE, SOF_IPC_FRAME_S16_LE,
+		audio_stream_copy },
+	{ SOF_IPC_FRAME_S32_LE, SOF_IPC_FRAME_S16_LE, SOF_IPC_FRAME_S32_LE, SOF_IPC_FRAME_S16_LE,
+		audio_stream_copy },
+#endif
 };
 
 const size_t pcm_func_vc_count = ARRAY_SIZE(pcm_func_vc_map);

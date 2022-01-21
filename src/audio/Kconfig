@@ -511,6 +511,13 @@ config PCM_CONVERTER_FORMAT_S16_C32_AND_S24_C32
 	  Support conversion between 16 bit valid sample size in 32 bit container
 	  and 24 bit valid sample size in 32 bit container
 
+config PCM_CONVERTER_FORMAT_S16_C32_AND_S16_C32
+	bool "Support S16C32 <-> S16C32"
+	default n
+	help
+	  Support conversion between 16 bit valid sample size in 32 bit container
+	  and 16 bit valid sample size in 32 bit container
+
 config PCM_CONVERTER_FORMAT_CONVERT_HIFI3
 	bool "HIFI3 optimized conversion"
 	default y
