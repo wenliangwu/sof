@@ -183,7 +183,9 @@ static int dts_codec_init(struct processing_module *mod)
 	return ret;
 }
 
-static int dts_codec_prepare(struct processing_module *mod)
+static int dts_codec_prepare(struct processing_module *mod,
+			     struct sof_source __sparse_cache **sources, int num_of_sources,
+			     struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	int ret;
 	struct comp_dev *dev = mod->dev;
@@ -315,11 +317,11 @@ static int dts_codec_apply_config(struct processing_module *mod)
 	/* Check that config->data isn't invalid and has size greater than 0 */
 	config_header_size = sizeof(config->size) + sizeof(config->avail);
 	if (config->size < config_header_size) {
-		comp_err(dev, "dts_codec_apply_config() config->data is invalid");
-		return -EINVAL;
+		comp_warn(dev, "dts_codec_apply_config() config->data is invalid");
+		return 0;
 	} else if (config->size == config_header_size) {
-		comp_err(dev, "dts_codec_apply_config() size of config->data is 0");
-		return -EINVAL;
+		comp_warn(dev, "dts_codec_apply_config() size of config->data is 0");
+		return 0;
 	}
 
 	/* Calculate size of config->data */
@@ -436,10 +438,6 @@ dts_codec_set_configuration(struct processing_module *mod, uint32_t config_id,
 	    md->state < MODULE_INITIALIZED)
 		return 0;
 
-	/* return if configuration size is 0 */
-	if (!md->new_cfg_size)
-		return 0;
-
 	/* whole configuration received, apply it now */
 	ret = dts_codec_apply_config(mod);
 	if (ret) {
@@ -456,7 +454,7 @@ dts_codec_set_configuration(struct processing_module *mod, uint32_t config_id,
 static struct module_interface dts_interface = {
 	.init  = dts_codec_init,
 	.prepare = dts_codec_prepare,
-	.process = dts_codec_process,
+	.process_raw_data = dts_codec_process,
 	.set_configuration = dts_codec_set_configuration,
 	.reset = dts_codec_reset,
 	.free = dts_codec_free

@@ -11,6 +11,10 @@ if((NOT CONFIG_LIBRARY) OR CONFIG_LIBRARY_STATIC)
 		host-legacy.c
 		component.c
 		buffer.c
+		source_api_helper.c
+		sink_api_helper.c
+		sink_source_utils.c
+		audio_stream.c
 		channel_map.c
 	)
 	if(CONFIG_COMP_BLOB)
@@ -56,11 +60,6 @@ if((NOT CONFIG_LIBRARY) OR CONFIG_LIBRARY_STATIC)
 	if(CONFIG_COMP_SWITCH)
 		add_local_sources(sof
 			switch.c
-		)
-	endif()
-	if(CONFIG_IPC4_GATEWAY)
-		add_local_sources(sof
-			ipcgtw.c
 		)
 	endif()
 	if(CONFIG_COMP_DAI)

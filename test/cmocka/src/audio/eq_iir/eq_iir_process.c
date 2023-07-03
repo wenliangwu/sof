@@ -170,7 +170,7 @@ static int setup(void **state)
 	mod->stream_params->channels = params->channels;
 	mod->period_bytes = get_frame_bytes(params->source_format, params->channels) * 48000 / 1000;
 
-	ret = module_prepare(mod);
+	ret = module_prepare(mod, NULL, 0, NULL, 0);
 	if (ret)
 		return ret;
 
@@ -213,7 +213,7 @@ static void fill_source_s16(struct test_data *td, int frames_max)
 	sb = list_first_item(&dev->bsource_list, struct comp_buffer, sink_list);
 	ss = &sb->stream;
 	frames = MIN(audio_stream_get_free_frames(ss), frames_max);
-	samples = frames * ss->channels;
+	samples = frames * audio_stream_get_channels(ss);
 	for (i = 0; i < samples; i++) {
 		x = audio_stream_write_frag_s16(ss, i);
 		*x = sat_int16(Q_SHIFT_RND(chirp_2ch[buffer_fill_data.idx++], 31, 15));
@@ -229,7 +229,7 @@ static void fill_source_s16(struct test_data *td, int frames_max)
 		comp_update_buffer_produce(sb, bytes_total);
 	}
 
-	mod->input_buffers[0].size = samples_processed / ss->channels;
+	mod->input_buffers[0].size = samples_processed / audio_stream_get_channels(ss);
 }
 
 static void verify_sink_s16(struct test_data *td)
@@ -276,7 +276,7 @@ static void fill_source_s24(struct test_data *td, int frames_max)
 	sb = list_first_item(&dev->bsource_list, struct comp_buffer, sink_list);
 	ss = &sb->stream;
 	frames = MIN(audio_stream_get_free_frames(ss), frames_max);
-	samples = frames * ss->channels;
+	samples = frames * audio_stream_get_channels(ss);
 	for (i = 0; i < samples; i++) {
 		x = audio_stream_write_frag_s32(ss, i);
 		*x = sat_int24(Q_SHIFT_RND(chirp_2ch[buffer_fill_data.idx++], 31, 23));
@@ -292,7 +292,7 @@ static void fill_source_s24(struct test_data *td, int frames_max)
 		comp_update_buffer_produce(sb, bytes_total);
 	}
 
-	mod->input_buffers[0].size = samples_processed / ss->channels;
+	mod->input_buffers[0].size = samples_processed / audio_stream_get_channels(ss);
 }
 
 static void verify_sink_s24(struct test_data *td)
@@ -339,7 +339,7 @@ static void fill_source_s32(struct test_data *td, int frames_max)
 	sb = list_first_item(&dev->bsource_list, struct comp_buffer, sink_list);
 	ss = &sb->stream;
 	frames = MIN(audio_stream_get_free_frames(ss), frames_max);
-	samples = frames * ss->channels;
+	samples = frames * audio_stream_get_channels(ss);
 	for (i = 0; i < samples; i++) {
 		x = audio_stream_write_frag_s32(ss, i);
 		*x = chirp_2ch[buffer_fill_data.idx++];
@@ -355,7 +355,7 @@ static void fill_source_s32(struct test_data *td, int frames_max)
 		comp_update_buffer_produce(sb, bytes_total);
 	}
 
-	mod->input_buffers[0].size = samples_processed / ss->channels;
+	mod->input_buffers[0].size = samples_processed / audio_stream_get_channels(ss);
 }
 
 static void verify_sink_s32(struct test_data *td)
@@ -409,7 +409,7 @@ static void test_audio_eq_iir(void **state)
 
 	while (td->continue_loop) {
 		frames = frames_jitter(td->params->frames);
-		switch (source->stream.frame_fmt) {
+		switch (audio_stream_get_frm_fmt(&source->stream)) {
 		case SOF_IPC_FRAME_S16_LE:
 			fill_source_s16(td, frames);
 			break;
@@ -428,13 +428,14 @@ static void test_audio_eq_iir(void **state)
 
 		mod->input_buffers[0].consumed = 0;
 		mod->output_buffers[0].size = 0;
-		ret = module_process(mod, mod->input_buffers, 1, mod->output_buffers, 1);
+		ret = module_process_legacy(mod, mod->input_buffers, 1,
+					    mod->output_buffers, 1);
 		assert_int_equal(ret, 0);
 
 		comp_update_buffer_consume(source, mod->input_buffers[0].consumed);
 		comp_update_buffer_produce(sink, mod->output_buffers[0].size);
 
-		switch (sink->stream.frame_fmt) {
+		switch (audio_stream_get_frm_fmt(&sink->stream)) {
 		case SOF_IPC_FRAME_S16_LE:
 			verify_sink_s16(td);
 			break;

@@ -31,6 +31,41 @@
 
 LOG_MODULE_DECLARE(ipc, CONFIG_SOF_LOG_LEVEL);
 
+void dai_set_link_hda_config(uint16_t *link_config,
+			     struct ipc_config_dai *common_config,
+			     const void *spec_config)
+{
+#if defined(CONFIG_ACE_VERSION_2_0)
+	const struct ipc4_audio_format *out_fmt = common_config->out_fmt;
+	union hdalink_cfg link_cfg;
+
+	switch (common_config->type) {
+	case SOF_DAI_INTEL_SSP:
+		link_cfg.full = 0;
+		link_cfg.part.dir = common_config->direction;
+		link_cfg.part.stream = common_config->host_dma_config->stream_id;
+		break;
+	case SOF_DAI_INTEL_DMIC:
+		link_cfg.full = 0;
+		if (out_fmt->depth == IPC4_DEPTH_16BIT) {
+			/* 16bit dmic packs two 16bit samples into single 32bit word
+			 * fw needs to adjust channel count to match final sample
+			 * group size
+			 */
+			link_cfg.part.hchan = (out_fmt->channels_count - 1) / 2;
+		} else {
+			link_cfg.part.hchan = out_fmt->channels_count - 1;
+		}
+		link_cfg.part.stream = common_config->host_dma_config->stream_id;
+		break;
+	default:
+		/* other types of DAIs not need link_config */
+		return;
+	}
+	*link_config = link_cfg.full;
+#endif
+}
+
 int dai_config_dma_channel(struct dai_data *dd, struct comp_dev *dev, const void *spec_config)
 {
 	const struct ipc4_copier_module_cfg *copier_cfg = spec_config;
@@ -42,6 +77,10 @@ int dai_config_dma_channel(struct dai_data *dd, struct comp_dev *dev, const void
 		COMPILER_FALLTHROUGH;
 	case SOF_DAI_INTEL_DMIC:
 		channel = 0;
+#if defined(CONFIG_ACE_VERSION_2_0)
+		if (dai->host_dma_config->pre_allocated_by_host)
+			channel = dai->host_dma_config->dma_channel_id;
+#endif
 		break;
 	case SOF_DAI_INTEL_HDA:
 		channel = copier_cfg->gtw_cfg.node_id.f.v_index;
@@ -338,7 +377,7 @@ int dai_config(struct dai_data *dd, struct comp_dev *dev, struct ipc_config_dai 
 }
 
 #if CONFIG_ZEPHYR_NATIVE_DRIVERS
-int dai_zephyr_position(struct dai_data *dd, struct comp_dev *dev,
+int dai_common_position(struct dai_data *dd, struct comp_dev *dev,
 			struct sof_ipc_stream_posn *posn)
 {
 	struct dma_status status;
@@ -363,7 +402,7 @@ int dai_position(struct comp_dev *dev, struct sof_ipc_stream_posn *posn)
 {
 	struct dai_data *dd = comp_get_drvdata(dev);
 
-	return dai_zephyr_position(dd, dev, posn);
+	return dai_common_position(dd, dev, posn);
 }
 
 void dai_dma_position_update(struct dai_data *dd, struct comp_dev *dev)
@@ -390,7 +429,7 @@ void dai_dma_position_update(struct dai_data *dd, struct comp_dev *dev)
 	mailbox_sw_regs_write(dd->slot_info.reg_offset, &slot, sizeof(slot));
 }
 #else
-int dai_zephyr_position(struct dai_data *dd, struct comp_dev *dev,
+int dai_common_position(struct dai_data *dd, struct comp_dev *dev,
 			struct sof_ipc_stream_posn *posn)
 {
 	struct dma_chan_status status;
@@ -411,7 +450,7 @@ int dai_position(struct comp_dev *dev, struct sof_ipc_stream_posn *posn)
 {
 	struct dai_data *dd = comp_get_drvdata(dev);
 
-	return dai_zephyr_position(dd, dev, posn);
+	return dai_common_position(dd, dev, posn);
 }
 
 void dai_dma_position_update(struct dai_data *dd, struct comp_dev *dev)

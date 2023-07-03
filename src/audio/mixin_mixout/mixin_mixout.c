@@ -120,8 +120,7 @@ static int mixin_init(struct processing_module *mod)
 				    &frame_fmt, &valid_fmt,
 				    mod->priv.cfg.base_cfg.audio_fmt.s_type);
 
-	dev->ipc_config.frame_fmt = frame_fmt;
-	mod->simple_copy = true;
+	dev->ipc_config.frame_fmt = valid_fmt;
 	mod->skip_src_buffer_invalidate = true;
 
 	return 0;
@@ -149,8 +148,7 @@ static int mixout_init(struct processing_module *mod)
 				    &frame_fmt, &valid_fmt,
 				    mod->priv.cfg.base_cfg.audio_fmt.s_type);
 
-	dev->ipc_config.frame_fmt = frame_fmt;
-	mod->simple_copy = true;
+	dev->ipc_config.frame_fmt = valid_fmt;
 	mod->skip_sink_buffer_writeback = true;
 
 	return 0;
@@ -307,7 +305,7 @@ static int mixin_process(struct processing_module *mod,
 	if (num_output_buffers == 0)
 		return 0;
 
-	if (num_output_buffers >= MIXIN_MAX_SINKS) {
+	if (num_output_buffers > MIXIN_MAX_SINKS) {
 		comp_err(dev, "mixin_process(): Invalid output buffer count %d",
 			 num_output_buffers);
 		return -EINVAL;
@@ -688,7 +686,9 @@ static int mixin_params(struct processing_module *mod)
  * We should also make sure that we propagate the prepare call to downstream
  * if downstream is not currently active.
  */
-static int mixin_prepare(struct processing_module *mod)
+static int mixin_prepare(struct processing_module *mod,
+			 struct sof_source __sparse_cache **sources, int num_of_sources,
+			 struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct mixin_data *md = module_get_private_data(mod);
 	struct comp_dev *dev = mod->dev;
@@ -748,7 +748,7 @@ static void base_module_cfg_to_stream_params(const struct ipc4_base_module_cfg *
 				    base_cfg->audio_fmt.valid_bit_depth,
 				    &frame_fmt, &valid_fmt,
 				    base_cfg->audio_fmt.s_type);
-	params->frame_fmt = frame_fmt;
+	params->frame_fmt = valid_fmt;
 
 	for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 		params->chmap[i] = (base_cfg->audio_fmt.ch_map >> i * 4) & 0xf;
@@ -784,6 +784,7 @@ static int mixout_params(struct processing_module *mod)
 				    mod->priv.cfg.base_cfg.audio_fmt.s_type);
 
 	audio_stream_set_valid_fmt(&sink_c->stream, valid_fmt);
+	audio_stream_set_channels(&sink_c->stream, params->channels);
 
 	sink_stream_size = audio_stream_get_size(&sink_c->stream);
 
@@ -806,7 +807,9 @@ static int mixout_params(struct processing_module *mod)
 	return 0;
 }
 
-static int mixout_prepare(struct processing_module *mod)
+static int mixout_prepare(struct processing_module *mod,
+			  struct sof_source __sparse_cache **sources, int num_of_sources,
+			  struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct module_source_info __sparse_cache *mod_source_info;
 	struct comp_dev *dev = mod->dev;
@@ -927,7 +930,7 @@ static int mixin_set_config(struct processing_module *mod, uint32_t config_id,
 static struct module_interface mixin_interface = {
 	.init  = mixin_init,
 	.prepare = mixin_prepare,
-	.process = mixin_process,
+	.process_audio_stream = mixin_process,
 	.set_configuration = mixin_set_config,
 	.reset = mixin_reset,
 	.free = mixin_free
@@ -939,7 +942,7 @@ SOF_MODULE_INIT(mixin, sys_comp_module_mixin_interface_init);
 static struct module_interface mixout_interface = {
 	.init  = mixout_init,
 	.prepare = mixout_prepare,
-	.process = mixout_process,
+	.process_audio_stream = mixout_process,
 	.reset = mixout_reset,
 	.free = mixout_free
 };

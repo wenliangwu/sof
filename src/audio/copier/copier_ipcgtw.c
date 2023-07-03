@@ -8,7 +8,6 @@
 #include <sof/lib/memory.h>
 #include <sof/ut.h>
 #include <rtos/init.h>
-#include <ipc4/ipcgtw.h>
 #include <ipc4/copier.h>
 #include <sof/audio/ipcgtw_copier.h>
 
@@ -22,33 +21,6 @@ DECLARE_TR_CTX(ipcgtw_comp_tr, SOF_UUID(ipcgtw_comp_uuid), LOG_LEVEL_INFO);
 
 /* List of existing IPC gateways */
 static struct list_item ipcgtw_list_head = LIST_INIT(ipcgtw_list_head);
-
-void ipcgtw_zephyr_new(struct ipcgtw_data *ipcgtw_data,
-		       const struct ipc4_copier_gateway_cfg *gtw_cfg,
-		       struct comp_dev *dev)
-{
-	const struct ipc4_ipc_gateway_config_blob *blob;
-
-	ipcgtw_data->node_id = gtw_cfg->node_id;
-	ipcgtw_data->dev = dev;
-
-	blob = (const struct ipc4_ipc_gateway_config_blob *)
-		((const struct ipc4_gateway_config_data *)gtw_cfg->config_data)->config_blob;
-
-	/* Endpoint buffer is created in copier with size specified in copier config. That buffer
-	 * will be resized to size specified in IPC gateway blob later in ipcgtw_params().
-	 */
-	comp_dbg(dev, "ipcgtw_new(): buffer_size: %u", blob->buffer_size);
-	ipcgtw_data->buf_size = blob->buffer_size;
-
-	list_item_append(&ipcgtw_data->item, &ipcgtw_list_head);
-}
-
-void ipcgtw_zephyr_free(struct ipcgtw_data *ipcgtw_data)
-{
-	list_item_del(&ipcgtw_data->item);
-	rfree(ipcgtw_data);
-}
 
 static struct comp_dev *find_ipcgtw_by_node_id(union ipc4_connector_node_id node_id)
 {
@@ -115,8 +87,8 @@ static inline struct comp_buffer *get_buffer(struct comp_dev *dev)
 	return list_first_item(&dev->bsource_list, struct comp_buffer, sink_list);
 }
 
-int ipcgtw_process_cmd(const struct ipc4_ipcgtw_cmd *cmd,
-		       void *reply_payload, uint32_t *reply_payload_size)
+int copier_ipcgtw_process(const struct ipc4_ipcgtw_cmd *cmd,
+			  void *reply_payload, uint32_t *reply_payload_size)
 {
 	const struct ipc4_ipc_gateway_cmd_data *in;
 	struct comp_dev *dev;
@@ -133,7 +105,7 @@ int ipcgtw_process_cmd(const struct ipc4_ipcgtw_cmd *cmd,
 	if (!dev)
 		return -ENODEV;
 
-	comp_dbg(dev, "ipcgtw_process_cmd(): %x %x",
+	comp_dbg(dev, "copier_ipcgtw_process(): %x %x",
 		 cmd->primary.dat, cmd->extension.dat);
 
 	buf = get_buffer(dev);
@@ -147,7 +119,7 @@ int ipcgtw_process_cmd(const struct ipc4_ipcgtw_cmd *cmd,
 		 * 0 bytes free for SET_DATA.
 		 */
 		buf_c = NULL;
-		comp_warn(dev, "ipcgtw_process_cmd(): no buffer found");
+		comp_warn(dev, "copier_ipcgtw_process(): no buffer found");
 	}
 
 	out = (struct ipc4_ipc_gateway_cmd_data_reply *)reply_payload;
@@ -196,7 +168,7 @@ int ipcgtw_process_cmd(const struct ipc4_ipcgtw_cmd *cmd,
 		break;
 
 	default:
-		comp_err(dev, "ipcgtw_process_cmd(): unexpected cmd: %u",
+		comp_err(dev, "copier_ipcgtw_process(): unexpected cmd: %u",
 			 (unsigned int)cmd->primary.r.cmd);
 		if (buf_c)
 			buffer_release(buf_c);
@@ -208,7 +180,7 @@ int ipcgtw_process_cmd(const struct ipc4_ipcgtw_cmd *cmd,
 	return 0;
 }
 
-int ipcgtw_zephyr_params(struct ipcgtw_data *ipcgtw_data, struct comp_dev *dev,
+int copier_ipcgtw_params(struct ipcgtw_data *ipcgtw_data, struct comp_dev *dev,
 			 struct sof_ipc_stream_params *params)
 {
 	struct comp_buffer *buf;
@@ -237,7 +209,7 @@ int ipcgtw_zephyr_params(struct ipcgtw_data *ipcgtw_data, struct comp_dev *dev,
 	return 0;
 }
 
-void ipcgtw_zephyr_reset(struct comp_dev *dev)
+void copier_ipcgtw_reset(struct comp_dev *dev)
 {
 	struct comp_buffer *buf = get_buffer(dev);
 
@@ -249,4 +221,94 @@ void ipcgtw_zephyr_reset(struct comp_dev *dev)
 	} else {
 		comp_warn(dev, "ipcgtw_reset(): no buffer found");
 	}
+}
+
+int copier_ipcgtw_create(struct comp_dev *parent_dev, struct copier_data *cd,
+			 struct comp_ipc_config *config,
+			 const struct ipc4_copier_module_cfg *copier, struct pipeline *pipeline)
+{
+	struct ipcgtw_data *ipcgtw_data;
+	const struct ipc4_copier_gateway_cfg *gtw_cfg;
+	const struct ipc4_ipc_gateway_config_blob *blob;
+	int ret;
+
+	gtw_cfg = &copier->gtw_cfg;
+	if (!gtw_cfg->config_length) {
+		comp_err(parent_dev, "ipcgtw_create(): empty ipc4_gateway_config_data");
+		return -EINVAL;
+	}
+
+	cd->ipc_gtw = true;
+
+	/* create_endpoint_buffer() uses this value to choose between input and
+	 * output formats in copier config to setup buffer. For this purpose
+	 * IPC gateway should be handled similarly as host gateway.
+	 */
+	config->type = SOF_COMP_HOST;
+
+	ret = create_endpoint_buffer(parent_dev, cd, config, copier, ipc4_gtw_none, false, 0);
+	if (ret < 0)
+		return ret;
+
+	ipcgtw_data = rzalloc(SOF_MEM_ZONE_RUNTIME, 0, SOF_MEM_CAPS_RAM, sizeof(*ipcgtw_data));
+	if (!ipcgtw_data) {
+		ret = -ENOMEM;
+		goto e_buf;
+	}
+
+	ipcgtw_data->node_id = gtw_cfg->node_id;
+	ipcgtw_data->dev = parent_dev;
+
+	blob = (const struct ipc4_ipc_gateway_config_blob *)
+		((const struct ipc4_gateway_config_data *)gtw_cfg->config_data)->config_blob;
+
+	/* Endpoint buffer is created in copier with size specified in copier config. That buffer
+	 * will be resized to size specified in IPC gateway blob later in ipcgtw_params().
+	 */
+	comp_dbg(parent_dev, "ipcgtw_create(): buffer_size: %u", blob->buffer_size);
+	ipcgtw_data->buf_size = blob->buffer_size;
+
+	cd->converter[IPC4_COPIER_GATEWAY_PIN] =
+		get_converter_func(&copier->base.audio_fmt,
+				   &copier->out_fmt,
+				   ipc4_gtw_host, IPC4_DIRECTION(cd->direction));
+	if (!cd->converter[IPC4_COPIER_GATEWAY_PIN]) {
+		comp_err(parent_dev, "failed to get converter for IPC gateway, dir %d",
+			 cd->direction);
+		ret = -EINVAL;
+		goto e_ipcgtw;
+	}
+
+	if (cd->direction == SOF_IPC_STREAM_PLAYBACK) {
+		comp_buffer_connect(parent_dev, config->core,
+				    cd->endpoint_buffer[cd->endpoint_num],
+				    PPL_CONN_DIR_COMP_TO_BUFFER);
+		cd->bsource_buffer = false;
+		pipeline->source_comp = parent_dev;
+	} else {
+		comp_buffer_connect(parent_dev, config->core,
+				    cd->endpoint_buffer[cd->endpoint_num],
+				    PPL_CONN_DIR_BUFFER_TO_COMP);
+		cd->bsource_buffer = true;
+		pipeline->sink_comp = parent_dev;
+	}
+
+	list_item_append(&ipcgtw_data->item, &ipcgtw_list_head);
+	cd->ipcgtw_data = ipcgtw_data;
+	cd->endpoint_num++;
+
+	return 0;
+
+e_ipcgtw:
+	rfree(ipcgtw_data);
+e_buf:
+	buffer_free(cd->endpoint_buffer[cd->endpoint_num]);
+	return ret;
+}
+
+void copier_ipcgtw_free(struct copier_data *cd)
+{
+	list_item_del(&cd->ipcgtw_data->item);
+	rfree(cd->ipcgtw_data);
+	buffer_free(cd->endpoint_buffer[0]);
 }

@@ -34,15 +34,17 @@
 struct comp_buffer;
 struct sof_ipc_ctrl_value_chan;
 
-#define CONFIG_GENERIC
-
 #if defined(__XCC__)
-#include <xtensa/config/core-isa.h>
-
-#if XCHAL_HAVE_HIFI3
-#undef CONFIG_GENERIC
-#endif
-
+# include <xtensa/config/core-isa.h>
+# if XCHAL_HAVE_HIFI4
+#  define VOLUME_HIFI4
+# elif XCHAL_HAVE_HIFI3
+#  define VOLUME_HIFI3
+# else
+#  define VOLUME_GENERIC
+# endif
+#else
+# define VOLUME_GENERIC
 #endif
 
 /**
@@ -65,8 +67,10 @@ struct sof_ipc_ctrl_value_chan;
 //** \brief Volume gain Qx.y */
 #define COMP_VOLUME_Q1_23 1
 
-//** \brief Volume gain Qx.y integer x number of bits including sign bit. */
-#define VOL_QXY_X 1
+/** \brief Volume gain Qx.y integer x number of bits including sign bit.
+ * With Q8.23 format the gain range is -138.47 to +42.14 dB.
+ */
+#define VOL_QXY_X 8
 
 //** \brief Volume gain Qx.y fractional y number of bits. */
 #define VOL_QXY_Y 23
@@ -88,6 +92,12 @@ struct sof_ipc_ctrl_value_chan;
 #define VOL_RAMP_UPDATE_THRESHOLD_SLOW_MS	128
 #define VOL_RAMP_UPDATE_THRESHOLD_FAST_MS	64
 #define VOL_RAMP_UPDATE_THRESHOLD_FASTEST_MS	32
+
+/**
+ * \brief left shift 8 bits to put the valid 24 bits into
+ * higher part of 32 bits container.
+ */
+#define PEAK_24S_32C_ADJUST 8
 
 /**
  * \brief Volume maximum value.
@@ -133,6 +143,8 @@ struct vol_data {
 	struct ipc4_peak_volume_regs peak_regs;
 	/**< store temp peak volume 4 times for scale_vol function */
 	int32_t *peak_vol;
+	uint32_t peak_cnt;		/**< accumulated period of volume processing*/
+	uint32_t peak_report_cnt;		/**< the period number to update peak meter*/
 #endif
 	int32_t volume[SOF_IPC_MAX_CHANNELS];	/**< current volume */
 	int32_t tvolume[SOF_IPC_MAX_CHANNELS];	/**< target volume */
@@ -157,12 +169,14 @@ struct vol_data {
 	vol_zc_func zc_get;			/**< function getting nearest zero crossing frame */
 	bool copy_gain;				/**< control copy gain or not */
 	uint32_t attenuation;			/**< peakmeter adjustment in range [0 - 31] */
+	bool is_passthrough;			/**< is passthrough or do gain multiplication */
 };
 
 /** \brief Volume processing functions map. */
 struct comp_func_map {
 	uint16_t frame_fmt;	/**< frame format */
 	vol_scale_func func;	/**< volume processing function */
+	vol_scale_func passthrough_func;	/**< volume passthrough function */
 };
 
 /** \brief Map of formats with dedicated processing functions. */
@@ -182,9 +196,11 @@ struct comp_zc_func_map {
  * \brief Retrievies volume processing function.
  * \param[in,out] dev Volume base component device.
  * \param[in] sinkb Sink buffer to match against
+ * \param[in] cd Volume data structure.
  */
 static inline vol_scale_func vol_get_processing_function(struct comp_dev *dev,
-							 struct comp_buffer __sparse_cache *sinkb)
+							 struct comp_buffer __sparse_cache *sinkb,
+							 struct vol_data *cd)
 {
 	int i;
 
@@ -193,33 +209,52 @@ static inline vol_scale_func vol_get_processing_function(struct comp_dev *dev,
 		if (audio_stream_get_frm_fmt(&sinkb->stream) != volume_func_map[i].frame_fmt)
 			continue;
 
-		return volume_func_map[i].func;
+		if (cd->is_passthrough)
+			return volume_func_map[i].passthrough_func;
+		else
+			return volume_func_map[i].func;
 	}
 
 	return NULL;
 }
+
 #else
 /**
  * \brief Retrievies volume processing function.
  * \param[in,out] dev Volume base component device.
- * \param[in] sinkb Sink buffer to match against
+ * \param[in] cd Volume data structure
  */
 static inline vol_scale_func vol_get_processing_function(struct comp_dev *dev,
-							 struct comp_buffer __sparse_cache *sinkb)
+							 struct vol_data *cd)
 {
 	struct processing_module *mod = comp_get_drvdata(dev);
 
-	switch (mod->priv.cfg.base_cfg.audio_fmt.valid_bit_depth) {
-	case IPC4_DEPTH_16BIT:
-		return volume_func_map[0].func;
-	case IPC4_DEPTH_24BIT:
-		return volume_func_map[1].func;
-	case IPC4_DEPTH_32BIT:
-		return volume_func_map[2].func;
-	default:
-		comp_err(dev, "vol_get_processing_function(): unsupported depth %d",
-			 mod->priv.cfg.base_cfg.audio_fmt.depth);
-		return NULL;
+	if (cd->is_passthrough) {
+		switch (mod->priv.cfg.base_cfg.audio_fmt.valid_bit_depth) {
+		case IPC4_DEPTH_16BIT:
+			return volume_func_map[0].passthrough_func;
+		case IPC4_DEPTH_24BIT:
+			return volume_func_map[1].passthrough_func;
+		case IPC4_DEPTH_32BIT:
+			return volume_func_map[2].passthrough_func;
+		default:
+			comp_err(dev, "vol_get_processing_function(): unsupported depth %d",
+				 mod->priv.cfg.base_cfg.audio_fmt.depth);
+			return NULL;
+		}
+	} else {
+		switch (mod->priv.cfg.base_cfg.audio_fmt.valid_bit_depth) {
+		case IPC4_DEPTH_16BIT:
+			return volume_func_map[0].func;
+		case IPC4_DEPTH_24BIT:
+			return volume_func_map[1].func;
+		case IPC4_DEPTH_32BIT:
+			return volume_func_map[2].func;
+		default:
+			comp_err(dev, "vol_get_processing_function(): unsupported depth %d",
+				 mod->priv.cfg.base_cfg.audio_fmt.depth);
+			return NULL;
+		}
 	}
 }
 #endif

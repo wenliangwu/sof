@@ -190,7 +190,7 @@ static int eq_fir_params(struct processing_module *mod)
 				    &frame_fmt, &valid_fmt,
 				    mod->priv.cfg.base_cfg.audio_fmt.s_type);
 
-	comp_params.frame_fmt = frame_fmt;
+	comp_params.frame_fmt = valid_fmt;
 
 	for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 		comp_params.chmap[i] = (mod->priv.cfg.base_cfg.audio_fmt.ch_map >> i * 4) & 0xf;
@@ -456,8 +456,6 @@ static int eq_fir_init(struct processing_module *mod)
 	for (i = 0; i < PLATFORM_MAX_CHANNELS; i++)
 		fir_reset(&cd->fir[i]);
 
-	mod->simple_copy = true;
-
 	return 0;
 
 err_init:
@@ -566,7 +564,9 @@ static void eq_fir_set_alignment(struct audio_stream __sparse_cache *source,
 	audio_stream_init_alignment_constants(byte_align, frame_align_req, sink);
 }
 
-static int eq_fir_prepare(struct processing_module *mod)
+static int eq_fir_prepare(struct processing_module *mod,
+			  struct sof_source __sparse_cache **sources, int num_of_sources,
+			  struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct comp_data *cd = module_get_private_data(mod);
 	struct comp_buffer *sourceb, *sinkb;
@@ -641,7 +641,7 @@ static struct module_interface eq_fir_interface = {
 		.free = eq_fir_free,
 		.set_configuration = eq_fir_set_config,
 		.get_configuration = eq_fir_get_config,
-		.process = eq_fir_process,
+		.process_audio_stream = eq_fir_process,
 		.prepare = eq_fir_prepare,
 		.reset = eq_fir_reset,
 };

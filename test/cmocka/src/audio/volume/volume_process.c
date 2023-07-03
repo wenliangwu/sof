@@ -62,6 +62,7 @@ static int setup(void **state)
 	cd = test_malloc(sizeof(*cd));
 	md = &vol_state->mod->priv;
 	md->private = cd;
+	cd->is_passthrough = false;
 
 	/* malloc memory to store current volume 4 times to ensure the address
 	 * is 8-byte aligned for multi-way xtensa intrinsic operations.
@@ -71,7 +72,11 @@ static int setup(void **state)
 	cd->vol = test_malloc(vol_size);
 
 	/* set processing function and volume */
-	cd->scale_vol = vol_get_processing_function(vol_state->mod->dev, vol_state->sinks[0]);
+#if CONFIG_IPC_MAJOR_4
+	cd->scale_vol = vol_get_processing_function(vol_state->mod->dev, cd);
+#else
+	cd->scale_vol = vol_get_processing_function(vol_state->mod->dev, vol_state->sinks[0], cd);
+#endif
 	set_volume(cd->volume, vol_parameters->volume, vol_state->parameters.channels);
 
 	/* assign test state */
@@ -116,7 +121,7 @@ static void verify_s16_to_s16(struct processing_module *mod, struct comp_buffer 
 	const int16_t *src = (int16_t *)source->stream.r_ptr;
 	const int16_t *dst = (int16_t *)sink->stream.w_ptr;
 	double processed;
-	int channels = sink->stream.channels;
+	int channels = audio_stream_get_channels(&sink->stream);
 	int channel;
 	int delta;
 	int i;
@@ -168,7 +173,7 @@ static void verify_s24_to_s24_s32(struct processing_module *mod,
 	double processed;
 	int32_t dst_sample;
 	int32_t sample;
-	int channels = sink->stream.channels;
+	int channels = audio_stream_get_channels(&sink->stream);
 	int channel;
 	int delta;
 	int i;
@@ -225,7 +230,7 @@ static void verify_s32_to_s24_s32(struct processing_module *mod,
 	const int32_t *dst = (int32_t *)sink->stream.w_ptr;
 	int32_t dst_sample;
 	int32_t sample;
-	int channels = sink->stream.channels;
+	int channels = audio_stream_get_channels(&sink->stream);
 	int channel;
 	int delta;
 	int i;
@@ -262,7 +267,7 @@ static void test_audio_vol(void **state)
 	struct processing_module *mod = vol_state->mod;
 	struct vol_data *cd = module_get_private_data(mod);
 
-	switch (vol_state->sinks[0]->stream.frame_fmt) {
+	switch (audio_stream_get_frm_fmt(&vol_state->sinks[0]->stream)) {
 	case SOF_IPC_FRAME_S16_LE:
 		fill_source_s16(vol_state);
 		break;

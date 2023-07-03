@@ -184,11 +184,8 @@ struct processing_module {
 	struct output_stream_buffer *output_buffers;
 	uint32_t num_input_buffers; /**< number of input buffers */
 	uint32_t num_output_buffers; /**< number of output buffers */
-	/*
-	 * flag set by a module that produces period_bytes every copy. It can be used by modules
-	 * that support 1:1, 1:N, N:1 sources:sinks configuration.
-	 */
-	bool simple_copy;
+	struct comp_buffer *source_comp_buffer; /**< single source component buffer */
+	struct comp_buffer *sink_comp_buffer; /**< single sink compoonent buffer */
 
 	/* module-specific flags for comp_verify_params() */
 	uint32_t verify_params_flags;
@@ -208,6 +205,13 @@ struct processing_module {
 	 */
 	bool skip_src_buffer_invalidate;
 
+	/*
+	 * True for module with one source component buffer and one sink component buffer
+	 * to enable reduction of module processing overhead. False if component uses
+	 * multiple buffers.
+	 */
+	bool stream_copy_single_to_single;
+
 	/* table containing the list of connected sources */
 	struct module_source_info *source_info;
 
@@ -224,10 +228,16 @@ int module_init(struct processing_module *mod, struct module_interface *interfac
 void *module_allocate_memory(struct processing_module *mod, uint32_t size, uint32_t alignment);
 int module_free_memory(struct processing_module *mod, void *ptr);
 void module_free_all_memory(struct processing_module *mod);
-int module_prepare(struct processing_module *mod);
-int module_process(struct processing_module *mod, struct input_stream_buffer *input_buffers,
-		   int num_input_buffers, struct output_stream_buffer *output_buffers,
-		   int num_output_buffers);
+int module_prepare(struct processing_module *mod,
+		   struct sof_source __sparse_cache **sources, int num_of_sources,
+		   struct sof_sink __sparse_cache **sinks, int num_of_sinks);
+int module_process_sink_src(struct processing_module *mod,
+			    struct sof_source __sparse_cache **sources, int num_of_sources,
+			    struct sof_sink __sparse_cache **sinks, int num_of_sinks);
+int module_process_legacy(struct processing_module *mod,
+			  struct input_stream_buffer *input_buffers, int num_input_buffers,
+			  struct output_stream_buffer *output_buffers,
+			  int num_output_buffers);
 int module_reset(struct processing_module *mod);
 int module_free(struct processing_module *mod);
 int module_set_configuration(struct processing_module *mod,

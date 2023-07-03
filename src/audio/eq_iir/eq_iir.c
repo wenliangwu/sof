@@ -670,12 +670,6 @@ static int eq_iir_init(struct processing_module *mod)
 	for (i = 0; i < PLATFORM_MAX_CHANNELS; i++)
 		iir_reset_df1(&cd->iir[i]);
 
-	/*
-	 * set the simple_copy flag as the eq_iir component always produces period_bytes
-	 * every period and has only 1 input/output buffer
-	 */
-	mod->simple_copy = true;
-
 	return 0;
 err:
 	rfree(cd);
@@ -859,7 +853,7 @@ static int eq_iir_params(struct processing_module *mod)
 				    &frame_fmt, &valid_fmt,
 				    mod->priv.cfg.base_cfg.audio_fmt.s_type);
 
-	comp_params.frame_fmt = frame_fmt;
+	comp_params.frame_fmt = valid_fmt;
 
 	for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 		comp_params.chmap[i] = (mod->priv.cfg.base_cfg.audio_fmt.ch_map >> i * 4) & 0xf;
@@ -885,7 +879,9 @@ static void eq_iir_set_passthrough_func(struct comp_data *cd,
 #endif
 }
 
-static int eq_iir_prepare(struct processing_module *mod)
+static int eq_iir_prepare(struct processing_module *mod,
+			  struct sof_source __sparse_cache **sources, int num_of_sources,
+			  struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct comp_data *cd = module_get_private_data(mod);
 	struct comp_buffer *sourceb, *sinkb;
@@ -967,7 +963,7 @@ static int eq_iir_reset(struct processing_module *mod)
 static struct module_interface eq_iir_interface = {
 	.init  = eq_iir_init,
 	.prepare = eq_iir_prepare,
-	.process = eq_iir_process,
+	.process_audio_stream = eq_iir_process,
 	.set_configuration = eq_iir_set_config,
 	.get_configuration = eq_iir_get_config,
 	.reset = eq_iir_reset,

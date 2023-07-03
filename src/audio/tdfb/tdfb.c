@@ -473,7 +473,6 @@ static int tdfb_init(struct processing_module *mod)
 	  * aspects TDFB is simple component type.
 	  */
 	mod->verify_params_flags = BUFF_PARAMS_CHANNELS;
-	mod->simple_copy = true;
 	return 0;
 
 err:
@@ -726,7 +725,9 @@ static void tdfb_set_alignment(struct audio_stream __sparse_cache *source,
 	audio_stream_init_alignment_constants(byte_align, frame_align_req, sink);
 }
 
-static int tdfb_prepare(struct processing_module *mod)
+static int tdfb_prepare(struct processing_module *mod,
+			struct sof_source __sparse_cache **sources, int num_of_sources,
+			struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct tdfb_comp_data *cd = module_get_private_data(mod);
 	struct comp_buffer *sourceb, *sinkb;
@@ -823,7 +824,7 @@ static struct module_interface tdfb_interface = {
 	.free = tdfb_free,
 	.set_configuration = tdfb_set_config,
 	.get_configuration = tdfb_get_config,
-	.process = tdfb_process,
+	.process_audio_stream = tdfb_process,
 	.prepare = tdfb_prepare,
 	.reset = tdfb_reset,
 };

@@ -239,7 +239,6 @@ static int mux_init(struct processing_module *mod)
 	}
 
 	mod->verify_params_flags = BUFF_PARAMS_CHANNELS;
-	mod->simple_copy = true;
 	mod->no_pause = true;
 	return 0;
 
@@ -305,7 +304,7 @@ static void set_mux_params(struct processing_module *mod)
 			audio_stream_set_channels(&sink_c->stream, out_fmt.channels_count);
 			audio_stream_set_rate(&sink_c->stream, out_fmt.sampling_frequency);
 
-			sink_c->buffer_fmt = out_fmt.interleaving_style;
+			audio_stream_set_buffer_fmt(&sink_c->stream, out_fmt.interleaving_style);
 			params->frame_fmt = audio_stream_get_frm_fmt(&sink_c->stream);
 
 			for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
@@ -337,7 +336,9 @@ static void set_mux_params(struct processing_module *mod)
 							    &frame_fmt, &valid_fmt,
 							    cd->md.base_cfg.audio_fmt.s_type);
 
-				source_c->buffer_fmt = cd->md.base_cfg.audio_fmt.interleaving_style;
+				audio_stream_set_buffer_fmt
+					(&source_c->stream,
+					 cd->md.base_cfg.audio_fmt.interleaving_style);
 
 				for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 					source_c->chmap[i] =
@@ -353,7 +354,9 @@ static void set_mux_params(struct processing_module *mod)
 							    &frame_fmt, &valid_fmt,
 							    cd->md.reference_format.s_type);
 
-				source_c->buffer_fmt = cd->md.reference_format.interleaving_style;
+				audio_stream_set_buffer_fmt
+					(&source_c->stream,
+					 cd->md.reference_format.interleaving_style);
 
 				for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 					source_c->chmap[i] =
@@ -527,18 +530,24 @@ static int mux_process(struct processing_module *mod,
 	struct comp_buffer __sparse_cache *source_c;
 	struct list_item *clist;
 	const struct audio_stream __sparse_cache *sources_stream[MUX_MAX_STREAMS] = { NULL };
-	int frames;
+	int frames = 0;
 	int sink_bytes;
 	int source_bytes;
-	int i;
+	int i, j;
 
 	comp_dbg(dev, "mux_process()");
 
 	/* align source streams with their respective configurations */
+	j = 0;
 	list_for_item(clist, &dev->bsource_list) {
 		source = container_of(clist, struct comp_buffer, sink_list);
 		source_c = buffer_acquire(source);
 		if (source_c->source->state == dev->state) {
+			if (frames)
+				frames = MIN(frames, input_buffers[j].size);
+			else
+				frames = input_buffers[j].size;
+
 			i = get_stream_index(dev, cd, source_c->pipeline_id);
 			/* return if index wrong */
 			if (i < 0) {
@@ -549,13 +558,13 @@ static int mux_process(struct processing_module *mod,
 			sources_stream[i] = &source_c->stream;
 		}
 		buffer_release(source_c);
+		j++;
 	}
 
 	/* check if there are any sources active */
 	if (num_input_buffers == 0)
 		return 0;
 
-	frames = input_buffers[0].size;
 	source_bytes = frames * audio_stream_frame_bytes(mod->input_buffers[0].data);
 	sink_bytes = frames * audio_stream_frame_bytes(mod->output_buffers[0].data);
 	mux_prepare_active_look_up(cd, output_buffers[0].data, &sources_stream[0]);
@@ -564,7 +573,16 @@ static int mux_process(struct processing_module *mod,
 	cd->mux(dev, output_buffers[0].data, &sources_stream[0], frames, &cd->active_lookup);
 
 	/* Update consumed and produced */
-	mod->input_buffers[0].consumed = source_bytes;
+	j = 0;
+	list_for_item(clist, &dev->bsource_list) {
+		source = container_of(clist, struct comp_buffer, sink_list);
+		source_c = buffer_acquire(source);
+		if (source_c->source->state == dev->state)
+			mod->input_buffers[j].consumed = source_bytes;
+
+		buffer_release(source_c);
+		j++;
+	}
 	mod->output_buffers[0].size = sink_bytes;
 	return 0;
 }
@@ -599,7 +617,9 @@ static int mux_reset(struct processing_module *mod)
 	return 0;
 }
 
-static int mux_prepare(struct processing_module *mod)
+static int mux_prepare(struct processing_module *mod,
+		       struct sof_source __sparse_cache **sources, int num_of_sources,
+		       struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct comp_dev *dev = mod->dev;
 	struct comp_data *cd = module_get_private_data(mod);
@@ -700,7 +720,7 @@ static struct module_interface mux_interface = {
 	.set_configuration = mux_set_config,
 	.get_configuration = mux_get_config,
 	.prepare = mux_prepare,
-	.process = mux_process,
+	.process_audio_stream = mux_process,
 	.reset = mux_reset,
 	.free = mux_free,
 };
@@ -713,7 +733,7 @@ static struct module_interface demux_interface = {
 	.set_configuration = mux_set_config,
 	.get_configuration = mux_get_config,
 	.prepare = mux_prepare,
-	.process = demux_process,
+	.process_audio_stream = demux_process,
 	.reset = mux_reset,
 	.free = mux_free,
 };

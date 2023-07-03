@@ -117,7 +117,9 @@ static int iadk_modules_init(struct processing_module *mod)
  *          configuration. Its internal structure is proprietary to the module implementation.
  *          There is one assumption - all IADK modules utilize IPC4 protocol.
  */
-static int iadk_modules_prepare(struct processing_module *mod)
+static int iadk_modules_prepare(struct processing_module *mod,
+				struct sof_source __sparse_cache **sources, int num_of_sources,
+				struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct comp_dev *dev = mod->dev;
 	int ret = 0;
@@ -292,7 +294,7 @@ static int iadk_modules_reset(struct processing_module *mod)
 static struct module_interface iadk_interface = {
 	.init  = iadk_modules_init,
 	.prepare = iadk_modules_prepare,
-	.process = iadk_modules_process,
+	.process_raw_data = iadk_modules_process,
 	.set_processing_mode = iadk_modules_set_processing_mode,
 	.get_processing_mode = iadk_modules_get_processing_mode,
 	.set_configuration = iadk_modules_set_configuration,

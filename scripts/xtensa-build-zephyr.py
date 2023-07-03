@@ -35,9 +35,12 @@ import os
 import warnings
 import fnmatch
 import hashlib
+import json
 import gzip
 import dataclasses
 import concurrent.futures as concurrent
+
+from west import configuration as west_config
 
 # anytree module is defined in Zephyr build requirements
 from anytree import AnyNode, RenderTree, render
@@ -57,10 +60,8 @@ VERSION = version.Version("2.0.0")
 # Constant value resolves SOF_TOP directory as: "this script directory/.."
 SOF_TOP = pathlib.Path(__file__).parents[1].resolve()
 west_top = pathlib.Path(SOF_TOP, "..").resolve()
-default_rimage_key = pathlib.Path(SOF_TOP, "keys", "otc_private_key.pem")
 
 sof_fw_version = None
-sof_build_version = None
 
 if py_platform.system() == "Windows":
 	xtensa_tools_version_postfix = "-win32"
@@ -72,6 +73,7 @@ else:
 
 
 @dataclasses.dataclass
+# pylint:disable=too-many-instance-attributes
 class PlatformConfig:
 	"Product parameters"
 	name: str
@@ -82,6 +84,7 @@ class PlatformConfig:
 	RIMAGE_KEY: pathlib.Path = pathlib.Path(SOF_TOP, "keys", "otc_private_key_3k.pem")
 	IPC4_RIMAGE_DESC: str = None
 	IPC4_CONFIG_OVERLAY: str = "ipc4_overlay.conf"
+	aliases: list = dataclasses.field(default_factory=list)
 
 platform_configs = {
 	#  Intel platforms
@@ -91,6 +94,7 @@ platform_configs = {
 		"cavs2x_LX6HiFi3_2017_8",
 		"xcc",
 		IPC4_RIMAGE_DESC = "tgl-cavs.toml",
+		aliases = ['adl', 'ehl']
 	),
 	"tgl-h" : PlatformConfig(
 		"tgl-h", "intel_adsp_cavs25_tgph",
@@ -98,12 +102,19 @@ platform_configs = {
 		"cavs2x_LX6HiFi3_2017_8",
 		"xcc",
 		IPC4_RIMAGE_DESC = "tgl-h-cavs.toml",
+		aliases = ['adl-s']
 	),
 	"mtl" : PlatformConfig(
 		"mtl", "intel_adsp_ace15_mtpm",
 		f"RI-2022.10{xtensa_tools_version_postfix}",
 		"ace10_LX7HiFi4_2022_10",
 	),
+	"lnl" : PlatformConfig(
+		"lnl", "intel_adsp_ace20_lnl",
+		f"RI-2022.10{xtensa_tools_version_postfix}",
+		"ace10_LX7HiFi4_2022_10",
+	),
+
 	#  NXP platforms
 	"imx8" : PlatformConfig(
 		"imx8", "nxp_adsp_imx8",
@@ -277,9 +288,9 @@ def execute_command(*run_args, **run_kwargs):
 		env_arg = run_kwargs.get('env')
 		env_change = set(env_arg.items()) - set(os.environ.items()) if env_arg else None
 		if env_change and (run_kwargs.get('sof_log_env') or args.verbose >= 1):
-			output += "\n... with extra/modified environment:"
+			output += "\n... with extra/modified environment:\n"
 			for k_v in env_change:
-				output += f"\n{k_v[0]}={k_v[1]}"
+				output += f"{k_v[0]}={k_v[1]}\n"
 		print(output, flush=True)
 
 	run_kwargs = {k: run_kwargs[k] for k in run_kwargs if not k.startswith("sof_")}
@@ -290,6 +301,18 @@ def execute_command(*run_args, **run_kwargs):
 
 	return subprocess.run(*run_args, **run_kwargs)
 
+def symlink_or_copy(directory, origbase, newbase):
+	"""Create a symbolic link or copy in the same directory. Don't
+	bother Windows users with symbolic links because they require
+	special privileges. Windows don't care about /lib/firmware/sof/
+	anyway. Make a copy instead to preserve cross-platform consistency.
+
+	"""
+	new = pathlib.Path(directory) / newbase
+	if py_platform.system() == "Windows":
+		shutil.copy2(pathlib.Path(directory) / origbase, new)
+	else:
+		new.symlink_to(origbase)
 
 def show_installed_files():
 	"""[summary] Scans output directory building binary tree from files and folders
@@ -377,6 +400,8 @@ def west_reinitialize(west_root_dir: pathlib.Path, west_manifest_path: pathlib.P
 	shutil.rmtree(dot_west_directory)
 	execute_command(["west", "init", "-l", f"{SOF_TOP}"], cwd=west_top)
 
+
+# TODO: use west APIs directly instead of all these indirect subprocess.run("west", ...) processes
 def west_init_if_needed():
 	"""[summary] Validates whether west workspace had been initialized and points to SOF manifest.
 	Peforms west initialization if needed.
@@ -444,30 +469,26 @@ def west_update():
 	execute_command(["west", "update"], check=True, timeout=3000, cwd=west_top)
 
 
-def get_build_and_sof_version(abs_build_dir):
-	"""[summary] Get version string major.minor.micro and build of SOF
+def get_sof_version():
+	"""[summary] Get version string major.minor.micro of SOF
 	firmware file. When building multiple platforms from the same SOF
 	commit, all platforms share the same version. So for the 1st platform,
-	generate the version string from sof_version.h and later platforms will
+	extract the version information from sof/versions.json and later platforms will
 	reuse it.
 	"""
 	global sof_fw_version
-	global sof_build_version
-	if sof_fw_version and sof_build_version:
-		return sof_fw_version, sof_build_version
+	if sof_fw_version:
+		return sof_fw_version
 
 	versions = {}
-	with open(pathlib.Path(abs_build_dir,
-		  "zephyr/include/generated/sof_versions.h"), encoding="utf8") as hfile:
-		for hline in hfile:
-			words = hline.split()
-			if words[0] == '#define':
-				versions[words[1]] = words[2]
-	sof_fw_version = versions['SOF_MAJOR'] + '.' + versions['SOF_MINOR'] + '.' + \
-		      versions['SOF_MICRO']
-	sof_build_version = versions['SOF_BUILD']
-
-	return sof_fw_version, sof_build_version
+	with open(SOF_TOP / "versions.json") as versions_file:
+		versions = json.load(versions_file)
+		# Keep this default value the same as the default SOF_MICRO in version.cmake
+		sof_micro = versions['SOF'].get('MICRO', "0")
+		sof_fw_version = (
+			f"{versions['SOF']['MAJOR']}.{versions['SOF']['MINOR']}.{sof_micro}"
+		)
+	return sof_fw_version
 
 def rmtree_if_exists(directory):
 	"This is different from ignore_errors=False because it deletes everything or nothing"
@@ -485,8 +506,9 @@ def clean_staging(platform):
 	rmtree_if_exists(sof_output_dir / platform)
 
 	# Remaining .ri and .ldc files
-	for f in sof_output_dir.glob(f"**/sof-{platform}.*"):
-		os.remove(f)
+	for p in [ platform ] + platform_configs[platform].aliases:
+		for f in sof_output_dir.glob(f"**/sof-{p}.*"):
+			os.remove(f)
 
 
 RIMAGE_BUILD_DIR  = west_top / "build-rimage"
@@ -498,6 +520,53 @@ RIMAGE_BUILD_DIR  = west_top / "build-rimage"
 # backwards-compatibility with XTOS platforms and git submodules, see more
 # detailed comments in west.yml
 RIMAGE_SOURCE_DIR = west_top / "sof" / "rimage"
+
+
+def rimage_west_configuration(platform_dict, dest_dir):
+	"""Configure rimage in a new file `dest_dir/westconfig.ini`, starting
+	from the workspace .west/config.
+	Returns the pathlib.Path to the new file.
+	"""
+
+	saved_local_var = os.environ.get('WEST_CONFIG_LOCAL')
+	workspace_west_config_path = os.environ.get('WEST_CONFIG_LOCAL',
+						   str(west_top / ".west" / "config"))
+	platform_west_config_path = dest_dir / "westconfig.ini"
+	dest_dir.mkdir(parents=True, exist_ok=True)
+	shutil.copyfile(workspace_west_config_path, platform_west_config_path)
+
+	# Create `platform_wconfig` object pointing at our copy
+	os.environ['WEST_CONFIG_LOCAL'] = str(platform_west_config_path)
+	platform_wconfig = west_config.Configuration()
+	if saved_local_var is None:
+		del os.environ['WEST_CONFIG_LOCAL']
+	else:
+		os.environ['WEST_CONFIG_LOCAL'] = saved_local_var
+
+	# By default, run rimage directly from the rimage build directory
+	if platform_wconfig.get("rimage.path") is None:
+		rimage_executable = shutil.which("rimage", path=RIMAGE_BUILD_DIR)
+		assert pathlib.Path(str(rimage_executable)).exists()
+		platform_wconfig.set("rimage.path", shlex.quote(rimage_executable),
+				     west_config.ConfigFile.LOCAL)
+
+	_ws_args = platform_wconfig.get("rimage.extra-args")
+	workspace_extra_args = [] if _ws_args is None else shlex.split(_ws_args)
+
+	# Flatten default rimage options while giving precedence to the workspace =
+	# the user input. We could just append and leave duplicates but that would be
+	# at best confusing and at worst relying on undocumented rimage precedence.
+	extra_args = []
+	for default_opt in rimage_options(platform_dict):
+		if not default_opt[0] in workspace_extra_args:
+			extra_args += default_opt
+
+	extra_args += workspace_extra_args
+
+	platform_wconfig.set("rimage.extra-args", shlex.join(extra_args))
+
+	return platform_west_config_path
+
 
 def build_rimage():
 
@@ -522,6 +591,49 @@ def build_rimage():
 	if args.verbose > 1:
 			rimage_build_cmd.append("-v")
 	execute_command(rimage_build_cmd, cwd=west_top)
+
+
+def rimage_options(platform_dict):
+	"""Return a list of default rimage options as a list of tuples,
+	example: [ (-f, 2.5.0), (-b, 1), (-k, key.pem),... ]
+
+	"""
+	opts = []
+
+	if args.verbose > 0:
+		opts.append(("-v",) * args.verbose)
+
+	signing_key = None
+	if args.key:
+		key_path = pathlib.Path(args.key)
+		assert key_path.exists(), f"{key_path} not found"
+		signing_key = key_path.resolve()
+	elif "RIMAGE_KEY" in platform_dict:
+		signing_key = platform_dict["RIMAGE_KEY"]
+
+	if signing_key is not None:
+		opts.append(("-k", str(signing_key)))
+
+	sof_fw_vers = get_sof_version()
+
+	opts.append(("-f", sof_fw_vers))
+
+	# Default value is 0 in rimage but for Zephyr the "build counter" has always
+	# been hardcoded to 1 in CMake and there is even a (broken) test that fails
+	# when it's not hardcoded to 1.
+	# FIXME: drop this line once the following test is fixed
+	# tests/avs/fw_00_basic/test_01_load_fw_extended.py::TestLoadFwExtended::()::
+	#                         test_00_01_load_fw_and_check_version
+	opts.append(("-b", "1"))
+
+	if args.ipc == "IPC4":
+		rimage_desc = platform_dict["IPC4_RIMAGE_DESC"]
+	else:
+		rimage_desc = platform_dict["name"] + ".toml"
+
+	opts.append(("-c", str(RIMAGE_SOURCE_DIR / "config" / rimage_desc)))
+
+	return opts
 
 
 STAGING_DIR = None
@@ -637,8 +749,15 @@ def build_platforms():
 	see https://docs.zephyrproject.org/latest/guides/west/build-flash-debug.html#one-time-cmake-arguments
 	Try "west config build.cmake-args -- ..." instead.""")
 
+		platf_build_environ['WEST_CONFIG_LOCAL'] = str(rimage_west_configuration(
+			platform_dict,
+			STAGING_DIR / "sof-info" / platform
+		))
+
 		# Make sure the build logs don't leave anything hidden
-		execute_command(['west', 'config', '-l'], cwd=west_top)
+		execute_command(['west', 'config', '-l'], cwd=west_top,
+				env=platf_build_environ, sof_log_env=True)
+		print()
 
 		# Build
 		try:
@@ -657,34 +776,8 @@ def build_platforms():
 		# Extract metadata
 		execute_command([str(smex_executable), "-l", str(fw_ldc_file), str(input_elf_file)])
 
-		# Sign firmware
-		rimage_executable = shutil.which("rimage", path=RIMAGE_BUILD_DIR)
-		rimage_config = RIMAGE_SOURCE_DIR / "config"
-		sign_cmd = ["west"]
-		sign_cmd += ["-v"] * args.verbose
-		sign_cmd += ["sign", "--build-dir", platform_build_dir_name, "--tool", "rimage"]
-		sign_cmd += ["--tool-path", rimage_executable]
-		signing_key = ""
-		if args.key:
-			signing_key = args.key
-		elif "RIMAGE_KEY" in platform_dict:
-			signing_key = platform_dict["RIMAGE_KEY"]
-		else:
-			signing_key = default_rimage_key
-
-		sign_cmd += ["--tool-data", str(rimage_config), "--", "-k", str(signing_key)]
-
-		sof_fw_vers, sof_build_vers = get_build_and_sof_version(abs_build_dir)
-
-		sign_cmd += ["-f", sof_fw_vers]
-
-		sign_cmd += ["-b", sof_build_vers]
-
-		if args.ipc == "IPC4":
-			rimage_desc = pathlib.Path(SOF_TOP, "rimage", "config", platform_dict["IPC4_RIMAGE_DESC"])
-			sign_cmd += ["-c", str(rimage_desc)]
-
-		execute_command(sign_cmd, cwd=west_top)
+		for p_alias in platform_configs[platform].aliases:
+			symlink_or_copy(sof_platform_output_dir, f"sof-{platform}.ldc", f"sof-{p_alias}.ldc")
 
 		if platform not in RI_INFO_UNSUPPORTED:
 			reproducible_checksum(platform, west_top / platform_build_dir_name / "zephyr" / "zephyr.ri")
@@ -743,6 +836,11 @@ def install_platform(platform, sof_platform_output_dir, platf_build_environ):
 	os.makedirs(install_key_dir, exist_ok=True)
 	# looses file owner and group - file is commonly accessible
 	shutil.copy2(abs_build_dir / "zephyr.ri", install_key_dir / output_fwname)
+
+	# The production key is usually different
+	if args.key_type_subdir != "none" and args.fw_naming != "AVS":
+		for p_alias in platform_configs[platform].aliases:
+			symlink_or_copy(install_key_dir, output_fwname, f"sof-{p_alias}.ri")
 
 
 	# sof-info/ directory
@@ -871,7 +969,7 @@ RI_INFO_UNSUPPORTED += ['rn']
 RI_INFO_UNSUPPORTED += ['mt8186', 'mt8195']
 
 # sof_ri_info.py has not caught up with the latest rimage yet: these will print a warning.
-RI_INFO_FIXME = ['mtl']
+RI_INFO_FIXME = ['mtl', 'lnl']
 
 def reproducible_checksum(platform, ri_file):
 

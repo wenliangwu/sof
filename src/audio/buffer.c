@@ -31,6 +31,7 @@ struct comp_buffer *buffer_alloc(uint32_t size, uint32_t caps, uint32_t flags, u
 {
 	struct comp_buffer *buffer;
 	struct comp_buffer __sparse_cache *buffer_c;
+	void *stream_addr;
 
 	tr_dbg(&buffer_tr, "buffer_alloc()");
 
@@ -51,23 +52,22 @@ struct comp_buffer *buffer_alloc(uint32_t size, uint32_t caps, uint32_t flags, u
 		return NULL;
 	}
 
-	buffer->stream.addr = rballoc_align(0, caps, size, align);
-	if (!buffer->stream.addr) {
+	stream_addr = rballoc_align(0, caps, size, align);
+	if (!stream_addr) {
 		rfree(buffer);
 		tr_err(&buffer_tr, "buffer_alloc(): could not alloc size = %u bytes of type = %u",
 		       size, caps);
 		return NULL;
 	}
 
-	buffer->stream.underrun_permitted = !!(flags & SOF_BUF_UNDERRUN_PERMITTED);
-	buffer->stream.overrun_permitted = !!(flags & SOF_BUF_OVERRUN_PERMITTED);
-
-	list_init(&buffer->source_list);
-	list_init(&buffer->sink_list);
-
 	/* From here no more uncached access to the buffer object, except its list headers */
 	buffer_c = buffer_acquire(buffer);
+	audio_stream_set_addr(&buffer_c->stream, stream_addr);
 	buffer_init(buffer_c, size, caps);
+
+	audio_stream_set_underrun(&buffer_c->stream, !!(flags & SOF_BUF_UNDERRUN_PERMITTED));
+	audio_stream_set_overrun(&buffer_c->stream, !!(flags & SOF_BUF_OVERRUN_PERMITTED));
+
 	buffer_release(buffer_c);
 
 	/*
@@ -81,6 +81,9 @@ struct comp_buffer *buffer_alloc(uint32_t size, uint32_t caps, uint32_t flags, u
 	 * re-loaded again.
 	 */
 	dcache_writeback_invalidate_region(uncache_to_cache(buffer), sizeof(*buffer));
+
+	list_init(&buffer->source_list);
+	list_init(&buffer->sink_list);
 
 	return buffer;
 }
@@ -152,7 +155,7 @@ int buffer_set_params(struct comp_buffer __sparse_cache *buffer,
 		return -EINVAL;
 	}
 
-	buffer->buffer_fmt = params->buffer_fmt;
+	audio_stream_set_buffer_fmt(&buffer->stream, params->buffer_fmt);
 	for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 		buffer->chmap[i] = params->chmap[i];
 
@@ -167,15 +170,15 @@ bool buffer_params_match(struct comp_buffer __sparse_cache *buffer,
 	assert(params);
 
 	if ((flag & BUFF_PARAMS_FRAME_FMT) &&
-	    buffer->stream.frame_fmt != params->frame_fmt)
+	     audio_stream_get_frm_fmt(&buffer->stream) != params->frame_fmt)
 		return false;
 
 	if ((flag & BUFF_PARAMS_RATE) &&
-	    buffer->stream.rate != params->rate)
+	     audio_stream_get_rate(&buffer->stream) != params->rate)
 		return false;
 
 	if ((flag & BUFF_PARAMS_CHANNELS) &&
-	    buffer->stream.channels != params->channels)
+	     audio_stream_get_channels(&buffer->stream) != params->channels)
 		return false;
 
 	return true;
@@ -283,8 +286,15 @@ void comp_update_buffer_consume(struct comp_buffer __sparse_cache *buffer, uint3
 		 (char *)audio_stream_get_addr(&buffer->stream)));
 }
 
+/*
+ * Locking: must be called with interrupts disabled! Serialized IPCs protect us
+ * from racing attach / detach calls, but the scheduler can interrupt the IPC
+ * thread and begin using the buffer for streaming. FIXME: this is still a
+ * problem with different cores.
+ */
 void buffer_attach(struct comp_buffer *buffer, struct list_item *head, int dir)
 {
+	struct list_item *list = buffer_comp_list(buffer, dir);
 	struct list_item __sparse_cache *needs_sync;
 	bool further_buffers_exist;
 
@@ -299,11 +309,17 @@ void buffer_attach(struct comp_buffer *buffer, struct list_item *head, int dir)
 	if (further_buffers_exist)
 		dcache_writeback_region(needs_sync, sizeof(struct list_item));
 	/* The cache line can be prefetched here, invalidate it after prepending */
-	list_item_prepend(buffer_comp_list(buffer, dir), head);
+	list_item_prepend(list, head);
 	if (further_buffers_exist)
 		dcache_invalidate_region(needs_sync, sizeof(struct list_item));
+	/* no dirty cache lines exist for this buffer yet, no need to write back */
+	dcache_invalidate_region(uncache_to_cache(list), sizeof(*list));
 }
 
+/*
+ * Locking: must be called with interrupts disabled! See buffer_attach() above
+ * for details
+ */
 void buffer_detach(struct comp_buffer *buffer, struct list_item *head, int dir)
 {
 	struct list_item __sparse_cache *needs_sync_prev, *needs_sync_next;
@@ -326,8 +342,10 @@ void buffer_detach(struct comp_buffer *buffer, struct list_item *head, int dir)
 		dcache_writeback_region(needs_sync_next, sizeof(struct list_item));
 	if (buffers_before_exist)
 		dcache_writeback_region(needs_sync_prev, sizeof(struct list_item));
+	dcache_writeback_region(uncache_to_cache(buf_list), sizeof(*buf_list));
 	/* buffers before or after can be prefetched here */
 	list_item_del(buf_list);
+	dcache_invalidate_region(uncache_to_cache(buf_list), sizeof(*buf_list));
 	if (buffers_after_exist)
 		dcache_invalidate_region(needs_sync_next, sizeof(struct list_item));
 	if (buffers_before_exist)

@@ -351,7 +351,6 @@ static int up_down_mixer_init(struct processing_module *mod)
 	}
 
 	mod_data->private = cd;
-	mod->simple_copy = true;
 
 	cd->buf_in = rballoc(0, SOF_MEM_CAPS_RAM, mod->priv.cfg.base_cfg.ibs);
 	cd->buf_out = rballoc(0, SOF_MEM_CAPS_RAM, mod->priv.cfg.base_cfg.obs);
@@ -400,7 +399,9 @@ err:
 }
 
 /* just stubs for now. Remove these after making these ops optional in the module adapter */
-static int up_down_mixer_prepare(struct processing_module *mod)
+static int up_down_mixer_prepare(struct processing_module *mod,
+				 struct sof_source __sparse_cache **sources, int num_of_sources,
+				 struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct up_down_mixer_data *cd = module_get_private_data(mod);
 	struct comp_dev *dev = mod->dev;
@@ -458,7 +459,7 @@ up_down_mixer_process(struct processing_module *mod,
 static struct module_interface up_down_mixer_interface = {
 	.init  = up_down_mixer_init,
 	.prepare = up_down_mixer_prepare,
-	.process = up_down_mixer_process,
+	.process_audio_stream = up_down_mixer_process,
 	.reset = up_down_mixer_reset,
 	.free = up_down_mixer_free
 };

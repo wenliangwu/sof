@@ -709,7 +709,7 @@ static void set_selector_params(struct processing_module *mod,
 		audio_stream_set_channels(&sink->stream, params->channels);
 		audio_stream_set_rate(&sink->stream, params->rate);
 
-		sink->buffer_fmt = out_fmt->interleaving_style;
+		audio_stream_set_buffer_fmt(&sink->stream, out_fmt->interleaving_style);
 
 		for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 			sink->chmap[i] = (out_fmt->ch_map >> i * 4) & 0xf;
@@ -741,7 +741,7 @@ static void set_selector_params(struct processing_module *mod,
 		audio_stream_set_channels(&source->stream, in_fmt->channels_count);
 		audio_stream_set_rate(&source->stream, in_fmt->sampling_frequency);
 
-		source->buffer_fmt = in_fmt->interleaving_style;
+		audio_stream_set_buffer_fmt(&source->stream, in_fmt->interleaving_style);
 
 		for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 			source->chmap[i] = (in_fmt->ch_map >> i * 4) & 0xf;
@@ -890,7 +890,9 @@ static int selector_process(struct processing_module *mod,
  * \param[in,out] mod Selector base module device.
  * \return Error code.
  */
-static int selector_prepare(struct processing_module *mod)
+static int selector_prepare(struct processing_module *mod,
+			    struct sof_source __sparse_cache **sources, int num_of_sources,
+			    struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct comp_data *cd = module_get_private_data(mod);
 	struct module_data *md = &mod->priv;
@@ -932,17 +934,13 @@ static int selector_prepare(struct processing_module *mod)
 	 * reduce channel count between source and sink
 	 */
 	comp_info(dev, "selector_prepare(): source sink channel = %u %u",
-		  audio_stream_get_channels(&source_c->stream), sink_c->stream.channels);
+		  audio_stream_get_channels(&source_c->stream),
+		  audio_stream_get_channels(&sink_c->stream));
 
 	sink_size = audio_stream_get_size(&sink_c->stream);
 
 	md->mpd.in_buff_size = cd->source_period_bytes;
 	md->mpd.out_buff_size = cd->sink_period_bytes;
-
-	/* Selector module has 1 input buffer and 1 output buffer and produces period_bytes
-	 * every copy. Use 'simple copy' processing scheme.
-	 */
-	mod->simple_copy = true;
 
 	buffer_release(sink_c);
 	buffer_release(source_c);
@@ -999,7 +997,7 @@ static int selector_reset(struct processing_module *mod)
 static struct module_interface selector_interface = {
 	.init			= selector_init,
 	.prepare		= selector_prepare,
-	.process		= selector_process,
+	.process_audio_stream	= selector_process,
 	.set_configuration	= selector_set_config,
 	.get_configuration	= selector_get_config,
 	.reset			= selector_reset,

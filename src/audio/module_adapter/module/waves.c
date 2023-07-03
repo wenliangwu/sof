@@ -688,7 +688,9 @@ static int waves_codec_init(struct processing_module *mod)
 	return ret;
 }
 
-static int waves_codec_prepare(struct processing_module *mod)
+static int waves_codec_prepare(struct processing_module *mod,
+			       struct sof_source __sparse_cache **sources, int num_of_sources,
+			       struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct comp_dev *dev = mod->dev;
 	int ret;
@@ -887,7 +889,7 @@ waves_codec_set_configuration(struct processing_module *mod, uint32_t config_id,
 static struct module_interface waves_interface = {
 	.init  = waves_codec_init,
 	.prepare = waves_codec_prepare,
-	.process = waves_codec_process,
+	.process_raw_data = waves_codec_process,
 	.set_configuration = waves_codec_set_configuration,
 	.reset = waves_codec_reset,
 	.free = waves_codec_free

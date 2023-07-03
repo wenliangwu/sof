@@ -208,7 +208,7 @@ if (CONFIG_SOC_SERIES_INTEL_CAVS_V25)
 endif()
 
 # Intel ACE 1.5 and newer platforms
-if (CONFIG_ACE_VERSION_1_5)
+if (CONFIG_SOC_SERIES_INTEL_ACE)
 
 	# Driver sources
 	zephyr_library_sources(
@@ -218,11 +218,22 @@ if (CONFIG_ACE_VERSION_1_5)
 	# Platform sources
 	zephyr_library_sources(
 		${SOF_PLATFORM_PATH}/intel/ace/platform.c
-		${SOF_PLATFORM_PATH}/meteorlake/lib/clk.c
 		lib/pm_runtime.c
 		lib/clk.c
 		lib/dma.c
 	)
+
+	if (CONFIG_SOC_INTEL_ACE15_MTPM)
+		zephyr_library_sources(
+			${SOF_PLATFORM_PATH}/meteorlake/lib/clk.c
+		)
+	endif()
+
+	if (CONFIG_SOC_INTEL_ACE20_LNL)
+		zephyr_library_sources(
+			${SOF_PLATFORM_PATH}/lunarlake/lib/clk.c
+		)
+	endif()
 
 	# SOF core infrastructure - runs on top of Zephyr
 	zephyr_library_sources(
@@ -246,10 +257,13 @@ if (CONFIG_ACE_VERSION_1_5)
 		${SOF_PLATFORM_PATH}/intel/ace/lib/watchdog.c
 	)
 
-	set(PLATFORM "meteorlake")
-
+	if (CONFIG_SOC_INTEL_ACE15_MTPM)
+		set(PLATFORM "meteorlake")
+	elseif(CONFIG_SOC_INTEL_ACE20_LNL)
+		set(PLATFORM "lunarlake")
+	endif()
 	zephyr_include_directories(${SOF_PLATFORM_PATH}/intel/ace/include)
-	zephyr_include_directories(${SOF_PLATFORM_PATH}/meteorlake/include)
+	zephyr_include_directories(${SOF_PLATFORM_PATH}/${PLATFORM}/include)
 endif()
 
 # NXP IMX8 platforms
@@ -349,6 +363,9 @@ zephyr_library_sources_ifdef(CONFIG_LIBRARY
 	${SOF_DRIVERS_PATH}/host/ipc.c
 )
 
+if(NOT DEFINED PLATFORM)
+	message(FATAL_ERROR "PLATFORM is not defined, check your Kconfiguration?")
+endif()
 zephyr_include_directories(${SOF_PLATFORM_PATH}/${PLATFORM}/include)
 
 # Mandatory Files used on all platforms.
@@ -377,6 +394,10 @@ zephyr_library_sources(
 	${SOF_AUDIO_PATH}/pcm_converter/pcm_converter.c
 	${SOF_AUDIO_PATH}/pcm_converter/pcm_converter_generic.c
 	${SOF_AUDIO_PATH}/buffer.c
+	${SOF_AUDIO_PATH}/source_api_helper.c
+	${SOF_AUDIO_PATH}/sink_api_helper.c
+	${SOF_AUDIO_PATH}/sink_source_utils.c
+	${SOF_AUDIO_PATH}/audio_stream.c
 	${SOF_AUDIO_PATH}/component.c
 	${SOF_AUDIO_PATH}/pipeline/pipeline-graph.c
 	${SOF_AUDIO_PATH}/pipeline/pipeline-params.c
@@ -536,7 +557,7 @@ else()
 endif()
 
 zephyr_library_sources_ifdef(CONFIG_IPC4_GATEWAY
-	${SOF_AUDIO_PATH}/ipcgtw.c
+	${SOF_AUDIO_PATH}/copier/copier_ipcgtw.c
 )
 
 zephyr_library_sources_ifdef(CONFIG_SAMPLE_KEYPHRASE
@@ -544,8 +565,10 @@ zephyr_library_sources_ifdef(CONFIG_SAMPLE_KEYPHRASE
 )
 
 zephyr_library_sources_ifdef(CONFIG_COMP_VOLUME
+	${SOF_AUDIO_MODULES_PATH}/volume/volume_hifi4.c
 	${SOF_AUDIO_MODULES_PATH}/volume/volume_hifi3.c
 	${SOF_AUDIO_MODULES_PATH}/volume/volume_generic.c
+	${SOF_AUDIO_MODULES_PATH}/volume/volume_hifi4_with_peakvol.c
 	${SOF_AUDIO_MODULES_PATH}/volume/volume_hifi3_with_peakvol.c
 	${SOF_AUDIO_MODULES_PATH}/volume/volume_generic_with_peakvol.c
 	${SOF_AUDIO_MODULES_PATH}/volume/volume.c
@@ -611,6 +634,8 @@ zephyr_library_sources_ifdef(CONFIG_COMP_COPIER
 	${SOF_AUDIO_PATH}/copier/copier_generic.c
 	${SOF_AUDIO_PATH}/copier/copier_hifi.c
 	${SOF_AUDIO_PATH}/copier/copier.c
+	${SOF_AUDIO_PATH}/copier/copier_host.c
+	${SOF_AUDIO_PATH}/copier/copier_dai.c
 )
 
 zephyr_library_sources_ifdef(CONFIG_MAXIM_DSM
@@ -681,8 +706,9 @@ zephyr_library_sources_ifdef(CONFIG_SQRT_FIXED
 	${SOF_MATH_PATH}/sqrt_int16.c
 )
 
-zephyr_library_sources_ifdef(CONFIG_EXP_FIXED
+zephyr_library_sources_ifdef(CONFIG_MATH_EXP
 	${SOF_MATH_PATH}/exp_fcn.c
+	${SOF_MATH_PATH}/exp_fcn_hifi4.c
 )
 
 zephyr_library_sources_ifdef(CONFIG_COMP_UP_DOWN_MIXER
@@ -721,6 +747,7 @@ zephyr_library_sources_ifdef(CONFIG_HAVE_AGENT
 
 zephyr_library_sources_ifdef(CONFIG_AMS
 	${SOF_LIB_PATH}/ams.c
+	${SOF_IPC_PATH}/ipc4/ams_helpers.c
 )
 
 zephyr_library_sources_ifdef(CONFIG_GDB_DEBUG

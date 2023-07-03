@@ -110,7 +110,6 @@ static int mfcc_init(struct processing_module *mod)
 		goto err_init;
 	}
 
-	mod->simple_copy = true;
 	return 0;
 
 err_init:
@@ -187,7 +186,9 @@ static void mfcc_set_alignment(struct audio_stream *source, struct audio_stream 
 	audio_stream_init_alignment_constants(byte_align, frame_align_req, sink);
 }
 
-static int mfcc_prepare(struct processing_module *mod)
+static int mfcc_prepare(struct processing_module *mod,
+			struct sof_source __sparse_cache **sources, int num_of_sources,
+			struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct mfcc_comp_data *cd = module_get_private_data(mod);
 	struct comp_buffer *sourceb;
@@ -272,7 +273,7 @@ static struct module_interface mfcc_interface = {
 		.free = mfcc_free,
 		.set_configuration = mfcc_set_config,
 		.get_configuration = mfcc_get_config,
-		.process = mfcc_process,
+		.process_audio_stream = mfcc_process,
 		.prepare = mfcc_prepare,
 		.reset = mfcc_reset,
 };

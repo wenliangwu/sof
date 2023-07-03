@@ -55,7 +55,6 @@ static int mixer_init(struct processing_module *mod)
 
 	mod_data->private = md;
 	mod->verify_params_flags = BUFF_PARAMS_CHANNELS;
-	mod->simple_copy = true;
 	mod->no_pause = true;
 	return 0;
 }
@@ -200,7 +199,7 @@ static inline void mixer_set_frame_alignment(struct audio_stream __sparse_cache 
 	/* Xtensa intrinsics ask for 8-byte aligned. 5.1 format SSE audio
 	 * requires 16-byte aligned.
 	 */
-	const uint32_t byte_align = source->channels == 6 ? 16 : 8;
+	const uint32_t byte_align = audio_stream_get_channels(source) == 6 ? 16 : 8;
 
 	/*There is no limit for frame number, so set it as 1*/
 	const uint32_t frame_align_req = 1;
@@ -218,7 +217,9 @@ static inline void mixer_set_frame_alignment(struct audio_stream __sparse_cache 
 	audio_stream_init_alignment_constants(byte_align, frame_align_req, source);
 }
 
-static int mixer_prepare(struct processing_module *mod)
+static int mixer_prepare(struct processing_module *mod,
+			 struct sof_source __sparse_cache **sources, int num_of_sources,
+			 struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct mixer_data *md = module_get_private_data(mod);
 	struct comp_buffer __sparse_cache *sink_c;
@@ -266,7 +267,7 @@ static int mixer_prepare(struct processing_module *mod)
 static struct module_interface mixer_interface = {
 	.init  = mixer_init,
 	.prepare = mixer_prepare,
-	.process = mixer_process,
+	.process_audio_stream = mixer_process,
 	.reset = mixer_reset,
 	.free = mixer_free,
 };

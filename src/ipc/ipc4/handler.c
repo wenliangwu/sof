@@ -28,7 +28,7 @@
 #include <ipc4/module.h>
 #include <ipc4/pipeline.h>
 #include <ipc4/notification.h>
-#include <ipc4/ipcgtw.h>
+#include <sof/audio/ipcgtw_copier.h>
 #include <ipc/trace.h>
 #include <user/trace.h>
 
@@ -67,9 +67,7 @@ static struct ipc4_msg_data msg_data;
 /* fw sends a fw ipc message to send the status of the last host ipc message */
 static struct ipc_msg msg_reply;
 
-#ifdef CONFIG_LOG_BACKEND_ADSP_MTRACE
 static struct ipc_msg msg_notify;
-#endif
 
 /*
  * Global IPC Operations.
@@ -486,7 +484,14 @@ static int ipc4_process_chain_dma(struct ipc4_message_request *ipc4)
 	comp_id = IPC4_COMP_ID(cdma.primary.r.host_dma_id + IPC4_MAX_MODULE_COUNT, 0);
 	cdma_comp = ipc_get_comp_by_id(ipc, comp_id);
 
-	if (!cdma_comp && cdma.primary.r.allocate && cdma.primary.r.enable) {
+	if (!cdma_comp) {
+		/*
+		 * Nothing to do when the chainDMA is not allocated and asked to
+		 * be freed
+		 */
+		if (!cdma.primary.r.allocate && !cdma.primary.r.enable)
+			return IPC4_SUCCESS;
+
 		ret = ipc4_chain_manager_create(&cdma);
 		if (ret < 0)
 			return IPC4_FAILURE;
@@ -537,8 +542,8 @@ static int ipc4_process_ipcgtw_cmd(struct ipc4_message_request *ipc4)
 	 * quite weird: seems one extra copying can be eliminated.
 	 */
 
-	err = ipcgtw_process_cmd((const struct ipc4_ipcgtw_cmd *)ipc4, ipc->comp_data,
-				 &reply_size);
+	err = copier_ipcgtw_process((const struct ipc4_ipcgtw_cmd *)ipc4, ipc->comp_data,
+				    &reply_size);
 	/* reply size is returned in header extension dword */
 	msg_reply.extension = reply_size;
 
@@ -1061,6 +1066,35 @@ void ipc_boot_complete_msg(struct ipc_cmd_hdr *header, uint32_t data)
 {
 	header->pri = SOF_IPC4_FW_READY;
 	header->ext = 0;
+}
+
+#if defined(CONFIG_PM_DEVICE) && defined(CONFIG_INTEL_ADSP_IPC)
+void ipc_send_failed_power_transition_response(void)
+{
+	struct ipc4_message_request *request = ipc_from_hdr(&msg_data.msg_in);
+	struct ipc4_message_reply response;
+
+	response.primary.r.status = IPC4_POWER_TRANSITION_FAILED;
+	response.primary.r.rsp = SOF_IPC4_MESSAGE_DIR_MSG_REPLY;
+	response.primary.r.msg_tgt = request->primary.r.msg_tgt;
+	response.primary.r.type = request->primary.r.type;
+
+	msg_reply.header = response.primary.dat;
+	list_init(&msg_reply.list);
+
+	ipc_msg_send_direct(&msg_reply, NULL);
+}
+#endif /* defined(CONFIG_PM_DEVICE) && defined(CONFIG_INTEL_ADSP_IPC) */
+
+void ipc_send_panic_notification(void)
+{
+	msg_notify.header = SOF_IPC4_NOTIF_HEADER(SOF_IPC4_EXCEPTION_CAUGHT);
+	msg_notify.extension = cpu_get_id();
+	msg_notify.tx_size = 0;
+	msg_notify.tx_data = NULL;
+	list_init(&msg_notify.list);
+
+	ipc_msg_send_direct(&msg_notify, NULL);
 }
 
 #ifdef CONFIG_LOG_BACKEND_ADSP_MTRACE
