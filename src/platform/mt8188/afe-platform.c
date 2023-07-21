@@ -140,6 +140,50 @@ static const struct mtk_base_memif_data memif_data[MT8188_MEMIF_NUM] = {
 		.msb2_reg = AFE_NORMAL_END_ADR_MSB,
 		.msb2_shift = 4,
 	},
+	[MT8188_MEMIF_UL10] = {
+		.name = "UL10",
+		.id = MT8188_MEMIF_UL10,
+		.reg_ofs_base = AFE_UL10_BASE,
+		.reg_ofs_cur = AFE_UL10_CUR,
+		.reg_ofs_end = AFE_UL10_END,
+		.fs_reg = AFE_MEMIF_AGENT_FS_CON3,
+		.fs_shift = 15,
+		.fs_maskbit = 0x1f,
+		.mono_reg = AFE_UL10_CON0,
+		.mono_shift = 1,
+		.int_odd_flag_reg = AFE_UL10_CON0,
+		.int_odd_flag_shift = 0,
+		.enable_reg = AFE_DAC_CON0,
+		.enable_shift = 10,
+		.hd_reg = AFE_UL10_CON0,
+		.hd_shift = 5,
+		.agent_disable_reg = AUDIO_TOP_CON5,
+		.agent_disable_shift = 9,
+		.ch_num_reg = -1,
+		.ch_num_shift = 0,
+		.ch_num_maskbit = 0,
+		.msb_reg = AFE_NORMAL_BASE_ADR_MSB,
+		.msb_shift = 9,
+		.msb2_reg = AFE_NORMAL_END_ADR_MSB,
+		.msb2_shift = 9,
+	},
+};
+
+static const struct mtk_afe_channel_merge cm_data[MT8188_AFE_CM_NUM] = {
+	[MT8188_AFE_CM2] = {
+		.id = MT8188_AFE_CM2,
+		.reg = AFE_CM2_CON,
+		.sel_shift = 30,
+		.sel_maskbit = 0x1,
+		.sel_default = 1,
+		.ch_num_shift = 2,
+		.ch_num_maskbit = 0x1f,
+		.en_shift = 0,
+		.en_maskbit = 0x1,
+		.update_cnt_shift = 16,
+		.update_cnt_maskbit = 0x1fff,
+		.update_cnt_default = 0x3,
+	},
 };
 
 struct mt8188_afe_rate {
@@ -238,15 +282,33 @@ static unsigned int mt8188_afe_fs(unsigned int rate, int aud_blk)
 	return mt8188_afe_fs_timing(rate);
 }
 
+static int mt8188_afe_found_cm_id(unsigned int memif_id)
+{
+	int id = -1;
+
+	switch (memif_id) {
+	case MT8188_MEMIF_UL10:
+		id = MT8188_AFE_CM2;
+		break;
+	default:
+		break;
+	}
+
+	return id;
+}
+
 struct mtk_base_afe_platform mtk_afe_platform = {
 	.base_addr = AFE_BASE_ADDR,
 	.memif_datas = memif_data,
 	.memif_size = MT8188_MEMIF_NUM,
 	.memif_dl_num = MT8188_MEMIF_DL_NUM,
 	.memif_32bit_supported = 0,
+	.cm_data = cm_data,
+	.cm_size = MT8188_AFE_CM_NUM,
 	.irq_datas = NULL,
 	.irqs_size = 0,
 	.dais_size = MT8188_DAI_NUM,
 	.afe_fs = mt8188_afe_fs,
 	.irq_fs = mt8188_afe_fs_timing,
+	.found_cm_id = mt8188_afe_found_cm_id,
 };
