@@ -9,6 +9,8 @@
 #ifndef __SOF_DRIVERS_AFE_DRV_H__
 #define __SOF_DRIVERS_AFE_DRV_H__
 
+#include <stdbool.h>
+
 struct mtk_base_memif_data {
 	int id;
 	const char *name;
@@ -71,6 +73,21 @@ struct mtk_base_irq_data {
 	int irq_scp_en_shift;
 };
 
+struct mtk_afe_channel_merge {
+	int id;
+	int reg;
+	unsigned int sel_shift;
+	unsigned int sel_maskbit;
+	unsigned int sel_default;
+	unsigned int ch_num_shift;
+	unsigned int ch_num_maskbit;
+	unsigned int en_shift;
+	unsigned int en_maskbit;
+	unsigned int update_cnt_shift;
+	unsigned int update_cnt_maskbit;
+	unsigned int update_cnt_default;
+};
+
 struct mtk_base_afe_memif {
 	unsigned int dma_addr;
 	unsigned int afe_addr;
@@ -103,6 +120,9 @@ struct mtk_base_afe {
 	int memif_32bit_supported;
 	int memif_dl_num;
 
+	const struct mtk_afe_channel_merge *cm;
+	int cm_size;
+
 	struct mtk_base_afe_irq *irqs;
 	int irqs_size;
 
@@ -113,6 +133,7 @@ struct mtk_base_afe {
 	unsigned int (*adsp2afe_addr)(unsigned int addr);
 	unsigned int (*afe_fs)(unsigned int rate, int aud_blk);
 	unsigned int (*irq_fs)(unsigned int rate);
+	int (*found_cm_id)(unsigned int memif_id);
 
 	int base_end_offset;
 
@@ -127,6 +148,9 @@ struct mtk_base_afe_platform {
 	int memif_32bit_supported;
 	int memif_dl_num;
 
+	const struct mtk_afe_channel_merge *cm_data;
+	int cm_size;
+
 	struct mtk_base_irq_data *irq_datas;
 	int irqs_size;
 	int dais_size;
@@ -138,6 +162,7 @@ struct mtk_base_afe_platform {
 	unsigned int (*adsp2afe_addr)(unsigned int addr);
 	unsigned int (*afe_fs)(unsigned int rate, int aud_blk);
 	unsigned int (*irq_fs)(unsigned int rate);
+	int (*found_cm_id)(unsigned int memif_id);
 };
 
 extern struct mtk_base_afe_platform mtk_afe_platform;
@@ -160,6 +185,10 @@ int afe_memif_set_addr(struct mtk_base_afe *afe, int id, unsigned int dma_addr,
 int afe_memif_set_enable(struct mtk_base_afe *afe, int id, int enable);
 unsigned int afe_memif_get_cur_position(struct mtk_base_afe *afe, int id);
 int afe_memif_get_direction(struct mtk_base_afe *afe, int id);
+
+/* cm opeartion */
+int afe_cm_config(struct mtk_base_afe *afe, int cm_id, unsigned int channels);
+int afe_cm_enable(struct mtk_base_afe *afe, int cm_id, bool enable);
 
 /* irq opeartion */
 int afe_irq_get_status(struct mtk_base_afe *afe, int id);

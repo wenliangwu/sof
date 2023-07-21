@@ -129,6 +129,41 @@ static int afe_memif_set_format(struct mtk_base_afe *afe, int id, unsigned int f
 	return 0;
 }
 
+int afe_cm_config(struct mtk_base_afe *afe, int cm_id, unsigned int channels)
+{
+	const struct mtk_afe_channel_merge *cm;
+
+	if (cm_id >= afe->cm_size)
+		return -1;
+
+	cm = &afe->cm[cm_id];
+
+	afe_reg_update_bits(afe, cm->reg,
+			    cm->sel_maskbit << cm->sel_shift |
+			    cm->ch_num_maskbit << cm->ch_num_shift |
+			    cm->update_cnt_maskbit << cm->update_cnt_shift,
+			    cm->sel_default << cm->sel_shift |
+			    (channels - 1) << cm->ch_num_shift |
+			    cm->update_cnt_default << cm->update_cnt_shift);
+
+	return 0;
+}
+
+int afe_cm_enable(struct mtk_base_afe *afe, int cm_id, bool enable)
+{
+	const struct mtk_afe_channel_merge *cm;
+
+	if (cm_id >= afe->cm_size)
+		return -1;
+
+	cm = &afe->cm[cm_id];
+
+	afe_reg_update_bits(afe, cm->reg, cm->en_maskbit << cm->en_shift,
+			    enable << cm->en_shift);
+
+	return 0;
+}
+
 int afe_memif_set_params(struct mtk_base_afe *afe, int id, unsigned int channel, unsigned int rate,
 			 unsigned int format)
 {
@@ -359,6 +394,7 @@ int afe_probe(struct mtk_base_afe *afe)
 	afe->irq_fs = platform->irq_fs;
 	if (!afe->afe_fs)
 		return -EINVAL;
+	afe->found_cm_id = platform->found_cm_id;
 	tr_dbg(&afedrv_tr, "afe_base:0x%x\n", afe->base);
 	/* TODO how to get the memif number, how to sync with dmac lib */
 	afe->memifs_size = platform->memif_size;
@@ -369,6 +405,9 @@ int afe_probe(struct mtk_base_afe *afe)
 
 	for (i = 0; i < afe->memifs_size; i++)
 		afe->memif[i].data = &platform->memif_datas[i];
+
+	afe->cm_size = platform->cm_size;
+	afe->cm = platform->cm_data;
 
 	/* TODO how to get the dai number, how to sync with dai lib*/
 	afe->dais_size = platform->dais_size;

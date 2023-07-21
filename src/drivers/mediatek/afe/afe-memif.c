@@ -36,6 +36,7 @@ struct afe_memif_dma {
 	int direction; /* 1 downlink, 0 uplink */
 
 	int memif_id;
+	int cm_id;
 	int dai_id;
 	int irq_id;
 	struct mtk_base_afe *afe;
@@ -110,6 +111,10 @@ static int memif_start(struct dma_chan_data *channel)
 		return -EINVAL;
 
 	channel->status = COMP_STATE_ACTIVE;
+
+	if (memif->cm_id >= 0)
+		afe_cm_enable(memif->afe, memif->cm_id, true);
+
 #if CONFIG_TEST_SGEN
 	afe_sinegen_enable();
 #endif
@@ -129,6 +134,10 @@ static int memif_release(struct dma_chan_data *channel)
 		return -EINVAL;
 
 	channel->status = COMP_STATE_ACTIVE;
+
+	if (memif->cm_id >= 0)
+		afe_cm_enable(memif->afe, memif->cm_id, false);
+
 	ret = afe_memif_set_enable(memif->afe, memif->memif_id, 0);
 	if (ret < 0)
 		return ret;
@@ -150,6 +159,9 @@ static int memif_pause(struct dma_chan_data *channel)
 		return -EINVAL;
 
 	channel->status = COMP_STATE_PAUSED;
+
+	if (memif->cm_id >= 0)
+		afe_cm_enable(memif->afe, memif->cm_id, false);
 
 	/* Disable HW requests */
 	return afe_memif_set_enable(memif->afe, memif->memif_id, 0);
@@ -173,6 +185,10 @@ static int memif_stop(struct dma_chan_data *channel)
 		return -EINVAL;
 	}
 	channel->status = COMP_STATE_READY;
+
+	if (memif->cm_id >= 0)
+		afe_cm_enable(memif->afe, memif->cm_id, false);
+
 	/* Disable channel */
 	return afe_memif_set_enable(memif->afe, memif->memif_id, 0);
 }
@@ -308,6 +324,9 @@ static int memif_set_config(struct dma_chan_data *channel, struct dma_sg_config 
 		return -ENOTSUP;
 	}
 
+	if (memif->cm_id >= 0)
+		afe_cm_config(memif->afe, memif->cm_id, memif->channel);
+
 	/* set the afe memif parameters */
 	ret = afe_memif_set_params(memif->afe, memif->memif_id, memif->channel, memif->rate,
 				   memif->format);
@@ -383,6 +402,10 @@ static int memif_probe(struct dma *dma)
 
 		memif->afe = afe;
 		memif->memif_id = channel;
+		if (afe->found_cm_id)
+			memif->cm_id = afe->found_cm_id(memif->memif_id);
+		else
+			memif->cm_id  = -1;
 		dma_chan_set_data(&dma->chan[channel], memif);
 	}
 	return 0;
