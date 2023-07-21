@@ -115,10 +115,10 @@
 #define HEAP_RT_COUNT64		32
 #define HEAP_RT_COUNT128	32
 #define HEAP_RT_COUNT256	32
-#define HEAP_RT_COUNT512	4
-#define HEAP_RT_COUNT1024	4
-#define HEAP_RT_COUNT2048	2
-#define HEAP_RT_COUNT4096	2
+#define HEAP_RT_COUNT512	6
+#define HEAP_RT_COUNT1024	6
+#define HEAP_RT_COUNT2048	4
+#define HEAP_RT_COUNT4096	4
 
 /* Heap section sizes for system runtime heap */
 #define HEAP_SYS_RT_COUNT64	128
